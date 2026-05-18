@@ -26,8 +26,7 @@ function runExtension() {
     let currentListIndex = -1;
     let allHouseholdCount = 0;
 
-    // Declared before tryStart so they are initialized when processSelectorAndStart
-    // is called synchronously (e.g. when the page is already loaded in Firefox).
+    // Shared by both the Redux and DOM startup paths.
     const keydownListener = function(event) {
         if (event.key === 'ArrowRight') {
             nextFamily()
@@ -44,26 +43,70 @@ function runExtension() {
         }
     }
 
-    // Wait for the household list to render. The list is loaded by an SPA,
-    // so we observe DOM mutations rather than polling.
-    const READY_TIMEOUT_MS = 30000;
-    const tryStart = () => {
-        const selector = getQuerySelector();
-        if (selector.length) {
-            observer.disconnect();
-            clearTimeout(readyTimeout);
-            processSelectorAndStart(selector);
-            return true;
+    async function photoExists(url) {
+        try {
+            const resp = await fetch(url, { method: 'HEAD', credentials: 'include' });
+            return resp.status === 200;
+        } catch (_err) {
+            return false;
         }
-        return false;
-    };
-    const observer = new MutationObserver(tryStart);
-    const readyTimeout = setTimeout(() => {
-        observer.disconnect();
-        console.warn('LDS Directory Flashcards: household list did not load within %dms', READY_TIMEOUT_MS);
-    }, READY_TIMEOUT_MS);
-    if (!tryStart()) {
-        observer.observe(document.body, { childList: true, subtree: true });
+    }
+
+    async function withConcurrency(tasks, limit = 5) {
+        const results = [];
+        const executing = new Set();
+        for (const task of tasks) {
+            const p = task().then((r) => { results.push(r); executing.delete(p); });
+            executing.add(p);
+            if (executing.size >= limit) await Promise.race(executing);
+        }
+        await Promise.all(executing);
+        return results;
+    }
+
+    async function buildFlashcardsFromRedux(payload) {
+        const BASE = '/api/v4/photos';
+        const householdsIn = payload.households;
+        const container = document.getElementById(containerId);
+
+        let completed = 0;
+        function bumpProgress() {
+            completed += 1;
+            container.innerText = `Loading ${completed}/${householdsIn.length} flashcards...`;
+        }
+
+        const tasks = householdsIn.map((hh) => async () => {
+            const hhUrl = `${BASE}/households/${hh.uuid}`;
+            if (await photoExists(hhUrl)) {
+                bumpProgress();
+                return {
+                    householdUuid: hh.uuid,
+                    householdName: hh.name,
+                    photoUrls: [hhUrl],
+                };
+            }
+
+            const heads = (hh.members || []).filter((m) => m.head === true);
+            const memberUrls = [];
+            for (const m of heads) {
+                const memUrl = `${BASE}/members/${m.uuid}`;
+                if (await photoExists(memUrl)) memberUrls.push(memUrl);
+            }
+            bumpProgress();
+
+            return {
+                householdUuid: hh.uuid,
+                householdName: hh.name,
+                photoUrls: memberUrls,
+            };
+        });
+
+        const results = await withConcurrency(tasks, 5);
+
+        const order = new Map(householdsIn.map((hh, i) => [hh.uuid, i]));
+        results.sort((a, b) => order.get(a.householdUuid) - order.get(b.householdUuid));
+
+        return results;
     }
 
     function getQuerySelector() {
@@ -85,7 +128,7 @@ function runExtension() {
         const container = document.getElementById(containerId)
 
         fullData.forEach(familyData => {
-            checkIfImageExists(familyData.householdImgUrl, function(didLoad) {
+            checkIfImageExists(familyData.photoUrls[0], function(didLoad) {
                 familyData.hasImage = didLoad
                 loadingImgCount = loadingImgCount + 1;
                 container.innerText = `Loading ${loadingImgCount}/${allHouseholdCount} flashcards...`
@@ -159,15 +202,30 @@ function runExtension() {
         return node;
     }
 
+    function preloadFlashcard(familyData) {
+        if (!familyData) return;
+        for (const url of familyData.photoUrls) {
+            const img = new Image();
+            img.src = url;
+        }
+    }
+
     function loadFamily(familyData) {
         const container = document.getElementById(containerId);
         container.replaceChildren();
 
-        const img = el('img');
-        img.src = familyData.householdImgUrl;
+        const imageRow = el('div', { className: 'image-row' });
+        for (const url of familyData.photoUrls) {
+            const img = el('img');
+            img.src = url;
+            imageRow.append(img);
+        }
+
+        preloadFlashcard(workingData[currentListIndex + 1]);
+        preloadFlashcard(workingData[currentListIndex + 2]);
 
         const imageContainer = el('div', { className: 'image-container' },
-            el('div', null, img)
+            imageRow
         );
 
         const nameDisplay = el('div', { id: flashcardNameDisplayId, className: 'display-name' });
@@ -217,7 +275,7 @@ function runExtension() {
             return {
                 householdHref: link.href,
                 householdName: link.children[0].innerText,
-                householdImgUrl: '/api/v4/photos/households/' + id,
+                photoUrls: ['/api/v4/photos/households/' + id],
                 householdId: id,
                 hasImage: null, // populated later
             }
@@ -237,6 +295,77 @@ function runExtension() {
 
         // Startup
         checkIfImagesExist()
+    }
+
+    // Wait for the INIT message from background before doing anything.
+    chrome.runtime.onMessage.addListener(function initListener(message) {
+        if (message?.type !== 'INIT') return;
+        chrome.runtime.onMessage.removeListener(initListener);
+        start(message.payload);
+    });
+
+    async function start(payload) {
+        if (payload?.source === 'redux') {
+            console.info(
+                'LDS Directory Flashcards: received Redux payload',
+                payload.unitNumber,
+                'with',
+                payload.households.length,
+                'households'
+            );
+
+            document.body.addEventListener('keyup', keyupListener);
+            document.body.addEventListener('keydown', keydownListener);
+
+            const container = document.createElement('div');
+            container.id = containerId;
+            container.className = 'container';
+            container.innerText = 'Loading...';
+            document.body.append(container);
+
+            try {
+                const results = await buildFlashcardsFromRedux(payload);
+                allHouseholdCount = results.length;
+                fullData = results.map((r) => ({
+                    householdName: r.householdName,
+                    photoUrls: r.photoUrls,
+                    hasImage: r.photoUrls.length > 0,
+                }));
+                resetList();
+            } catch (err) {
+                console.error('LDS Directory Flashcards: redux path failed; falling back to DOM', err);
+                document.body.removeEventListener('keyup', keyupListener);
+                document.body.removeEventListener('keydown', keydownListener);
+                document.getElementById(containerId)?.remove();
+                startDom();
+            }
+            return;
+        }
+
+        console.info('LDS Directory Flashcards: Redux store unavailable, falling back to DOM scrape');
+        startDom();
+    }
+
+    function startDom() {
+        const READY_TIMEOUT_MS = 30000;
+        const tryStart = () => {
+            const selector = getQuerySelector();
+            if (selector.length) {
+                observer.disconnect();
+                clearTimeout(readyTimeout);
+                processSelectorAndStart(selector);
+                return true;
+            }
+            return false;
+        };
+        const observer = new MutationObserver(tryStart);
+        const readyTimeout = setTimeout(() => {
+            observer.disconnect();
+            console.warn('LDS Directory Flashcards: household list did not load within %dms', READY_TIMEOUT_MS);
+        }, READY_TIMEOUT_MS);
+        if (!tryStart()) {
+            observer.observe(document.body, { childList: true, subtree: true });
+        }
     }
 }
 runExtension()
