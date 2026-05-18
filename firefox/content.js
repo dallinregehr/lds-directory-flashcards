@@ -1,0 +1,240 @@
+// ------------------------------------------------
+// LDS Directory Flashcards
+// 
+// When the browser extension is activated:
+// - wait until the household list has loaded
+// - iterate over household list and save id, img url, etc
+// - create and display popup with loading text
+// - traverse image urls and prefetch them so navigating flashcards is snappy (can take a few seconds)
+// - keep user up-to-date on progress so program doesn't appear to be hung
+// - load first household with image, name, and controls
+// - respond as indicated by user's interactions with buttons or keybindings
+// ------------------------------------------------
+
+// wrap whole extension so retriggering extension after it has been closed doesn't error
+// on everthing below being redeclared
+function runExtension() {
+
+    const containerId = 'quiz-container'
+    const flashcardNameDisplayId = 'flashcard-display-name'
+
+    // Prevent stacking duplicate overlays / listeners on repeat clicks
+    if (document.getElementById(containerId)) return;
+
+    let fullData = [];
+    let workingData = [];
+    let currentListIndex = -1;
+    let allHouseholdCount = 0;
+
+    // Wait for the household list to render. The list is loaded by an SPA,
+    // so we observe DOM mutations rather than polling.
+    const READY_TIMEOUT_MS = 30000;
+    const tryStart = () => {
+        const selector = getQuerySelector();
+        if (selector.length) {
+            observer.disconnect();
+            clearTimeout(readyTimeout);
+            processSelectorAndStart(selector);
+            return true;
+        }
+        return false;
+    };
+    const observer = new MutationObserver(tryStart);
+    const readyTimeout = setTimeout(() => {
+        observer.disconnect();
+        console.warn('LDS Directory Flashcards: household list did not load within %dms', READY_TIMEOUT_MS);
+    }, READY_TIMEOUT_MS);
+    if (!tryStart()) {
+        observer.observe(document.body, { childList: true, subtree: true });
+    }
+
+    function getQuerySelector() {
+        return document.querySelectorAll('#app-page section div[data-scroll=true] div a[role=link]')
+    }
+
+    function checkIfImagesExist() {
+        
+        // keep track of how many images checked so user can see progress
+        let loadingImgCount = 0;
+
+        function checkIfImageExists(url, callback) {
+            const img = new Image();
+            img.onload = () => callback(true);
+            img.onerror = () => callback(false);
+            img.src = url;
+        }
+
+        const container = document.getElementById(containerId)
+
+        fullData.forEach(familyData => {
+            checkIfImageExists(familyData.householdImgUrl, function(didLoad) {
+                familyData.hasImage = didLoad
+                loadingImgCount = loadingImgCount + 1;
+                container.innerText = `Loading ${loadingImgCount}/${allHouseholdCount} flashcards...`
+
+                // display once all images have been checked
+                if (loadingImgCount === allHouseholdCount) {
+                    resetList()
+                }
+            })
+        })
+    }
+
+
+    function shuffleArray(array) {
+        for (let i = array.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [array[i], array[j]] = [array[j], array[i]];
+        }
+    }
+
+    // create a new full randomized family list
+    function resetList() {
+        currentListIndex = -1;
+        workingData = fullData.filter(f => f.hasImage)
+        shuffleArray(workingData)
+        nextFamily()
+    }
+
+    function nextFamily() {
+        if ((currentListIndex + 1) < workingData.length) {
+            currentListIndex++
+            loadFamily(workingData[currentListIndex])
+        }
+    }
+
+    function previousFamily() {
+        if ((currentListIndex - 1) >= 0) {
+            currentListIndex--;
+            loadFamily(workingData[currentListIndex])
+        }
+    }
+
+    function showDisplayName() {
+        document.getElementById(flashcardNameDisplayId).classList.add('revealed')
+    }
+
+    function hideDisplayName() {
+        document.getElementById(flashcardNameDisplayId).classList.remove('revealed')
+    }
+
+
+    const keydownListener = function(event) {
+        if (event.key === 'ArrowRight') {
+            nextFamily()
+        } else if (event.key === 'ArrowLeft') {
+            previousFamily()
+        } else if (event.key === ' ') {
+            showDisplayName()
+        }
+    }
+
+
+    const keyupListener = function(event) {
+        if (event.key === ' ') {
+            hideDisplayName()
+        }
+    }
+
+    function closeQuiz() {
+        // cleanup
+        document.body.removeEventListener('keyup', keyupListener)
+        document.body.removeEventListener('keydown', keydownListener)
+        document.getElementById(containerId).remove()
+    }
+
+    function el(tag, props, ...children) {
+        const node = document.createElement(tag);
+        if (props) {
+            for (const [k, v] of Object.entries(props)) {
+                if (k === 'className') node.className = v;
+                else if (k === 'textContent') node.textContent = v;
+                else node.setAttribute(k, v);
+            }
+        }
+        for (const child of children) {
+            if (child == null) continue;
+            node.append(child);
+        }
+        return node;
+    }
+
+    function loadFamily(familyData) {
+        const container = document.getElementById(containerId);
+        container.replaceChildren();
+
+        const img = el('img');
+        img.src = familyData.householdImgUrl;
+
+        const imageContainer = el('div', { className: 'image-container' },
+            el('div', null, img)
+        );
+
+        const nameDisplay = el('div', { id: flashcardNameDisplayId, className: 'display-name' });
+        nameDisplay.textContent = familyData.householdName;
+
+        const prevBtn = el('button', { id: 'quiz-prev-btn', className: 'prev-next-btn', textContent: '❮' });
+        const nextBtn = el('button', { id: 'quiz-next-btn', className: 'prev-next-btn', textContent: '❯' });
+        const reshuffleBtn = el('button', { id: 'quiz-reshuffle-btn', className: 'reshuffle-btn', textContent: '↩ Reshuffle' });
+        const closeBtn = el('div', { id: 'quiz-close-btn', className: 'close-btn', title: 'close flashcards', textContent: 'X' });
+
+        const progress = el('div', null,
+            el('div', { textContent: `${currentListIndex + 1} / ${workingData.length}` })
+        );
+
+        const help = el('div');
+        help.append(
+            el('b', { textContent: 'Navigate:' }), ' use buttons or right/left arrow keys', el('br'),
+            el('b', { textContent: 'Reveal Name:' }), ' press space or hover over the blurred name', el('br'),
+            el('i', { textContent: `Note: there are ${allHouseholdCount - workingData.length} households without photos.` }), el('br'),
+            reshuffleBtn
+        );
+
+        const controls = el('div', { className: 'controls-container' },
+            nameDisplay, prevBtn, nextBtn, progress, el('br'), help, closeBtn
+        );
+
+        container.append(imageContainer, controls);
+
+        nameDisplay.addEventListener('mouseover', showDisplayName);
+        nameDisplay.addEventListener('mouseout', hideDisplayName);
+        prevBtn.addEventListener('click', previousFamily);
+        nextBtn.addEventListener('click', nextFamily);
+        reshuffleBtn.addEventListener('click', resetList);
+        closeBtn.addEventListener('click', closeQuiz);
+    }
+
+
+    function processSelectorAndStart(selector) {
+
+        // scrape household name, image, url, and identifier
+        fullData = [...selector].map(function(link) { 
+            // link looks like
+            // https://directory.churchofjesuschrist.org/433608/households/d0b1daaa-5155-4e80-9b53-da19b7fa029e
+            const id = link.href.split('/').pop() // last has the id
+            return {
+                householdHref: link.href,
+                householdName: link.children[0].innerText,
+                householdImgUrl: '/api/v4/photos/households/' + id,
+                householdId: id,
+                hasImage: null, // populated later
+            }
+        })
+
+        allHouseholdCount = fullData.length
+
+        document.body.addEventListener('keyup', keyupListener)
+        document.body.addEventListener('keydown', keydownListener)
+
+
+        const container = document.createElement('div')
+        container.id = containerId
+        container.className = 'container'
+        container.innerText = 'Loading...'
+        document.body.append(container)
+
+        // Startup
+        checkIfImagesExist()
+    }
+}
+runExtension()
