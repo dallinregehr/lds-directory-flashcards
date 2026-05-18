@@ -25,12 +25,16 @@
     justify-content: center;
     overflow: auto;
 }
-.image-container div {
+.image-row {
     display: flex;
     justify-content: center;
+    align-items: center;
     width: 100%;
+    gap: 12px;
 }
-.image-container img {
+.image-row img {
+    flex: 1 1 0;
+    min-width: 0;
     max-height: 100%;
     object-fit: contain;
 }
