@@ -1,0 +1,16 @@
+{
+  "name": "lds-directory-flashcards",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A browser extension that helps members learn names from their ward directory.",
+  "scripts": {
+    "build":           "node build.mjs",
+    "build:chrome":    "node build.mjs chrome",
+    "build:firefox":   "node build.mjs firefox",
+    "watch":           "node build.mjs --watch",
+    "clean":           "rm -rf dist",
+    "package:chrome":  "npm run build:chrome  && cd dist/chrome  && zip -r ../chrome-$npm_package_version.zip  .",
+    "package:firefox": "npm run build:firefox && cd dist/firefox && zip -r ../firefox-$npm_package_version.zip .",
+    "package":         "npm run package:chrome && npm run package:firefox"
+  }
+}
