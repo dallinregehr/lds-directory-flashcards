@@ -1,6 +1,6 @@
 // ------------------------------------------------
 // LDS Directory Flashcards
-// 
+//
 // When the browser extension is activated:
 // - wait until the household list has loaded
 // - iterate over household list and save id, img url, etc
@@ -25,6 +25,24 @@ function runExtension() {
     let workingData = [];
     let currentListIndex = -1;
     let allHouseholdCount = 0;
+
+    // Declared before tryStart so they are initialized when processSelectorAndStart
+    // is called synchronously (e.g. when the page is already loaded in Firefox).
+    const keydownListener = function(event) {
+        if (event.key === 'ArrowRight') {
+            nextFamily()
+        } else if (event.key === 'ArrowLeft') {
+            previousFamily()
+        } else if (event.key === ' ') {
+            showDisplayName()
+        }
+    }
+
+    const keyupListener = function(event) {
+        if (event.key === ' ') {
+            hideDisplayName()
+        }
+    }
 
     // Wait for the household list to render. The list is loaded by an SPA,
     // so we observe DOM mutations rather than polling.
@@ -53,7 +71,7 @@ function runExtension() {
     }
 
     function checkIfImagesExist() {
-        
+
         // keep track of how many images checked so user can see progress
         let loadingImgCount = 0;
 
@@ -116,24 +134,6 @@ function runExtension() {
 
     function hideDisplayName() {
         document.getElementById(flashcardNameDisplayId).classList.remove('revealed')
-    }
-
-
-    const keydownListener = function(event) {
-        if (event.key === 'ArrowRight') {
-            nextFamily()
-        } else if (event.key === 'ArrowLeft') {
-            previousFamily()
-        } else if (event.key === ' ') {
-            showDisplayName()
-        }
-    }
-
-
-    const keyupListener = function(event) {
-        if (event.key === ' ') {
-            hideDisplayName()
-        }
     }
 
     function closeQuiz() {
@@ -208,7 +208,7 @@ function runExtension() {
     function processSelectorAndStart(selector) {
 
         // scrape household name, image, url, and identifier
-        fullData = [...selector].map(function(link) { 
+        fullData = [...selector].map(function(link) {
             // link looks like
             // https://directory.churchofjesuschrist.org/433608/households/d0b1daaa-5155-4e80-9b53-da19b7fa029e
             const id = link.href.split('/').pop() // last has the id

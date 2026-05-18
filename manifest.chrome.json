@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "LDS Directory Flashcards",
   "version": "0.1.0",
-  "description": "A simple way to learn the names of members in your ward.",
+  "description": "A simple way to learn the names of members in your ward. (Chrome — use manifest.firefox.json for Firefox/Zen)",
   "action": {
     "default_title": "Activate LDS Directory Flashcards"
   },
