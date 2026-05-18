@@ -1,0 +1,9 @@
+{
+  "background": { "scripts": ["background.js"] },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "lds-directory-flashcards@firefox",
+      "strict_min_version": "91.0"
+    }
+  }
+}
