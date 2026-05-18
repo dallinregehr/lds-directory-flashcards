@@ -176,7 +176,7 @@ function runExtension() {
         const prevBtn = el('button', { id: 'quiz-prev-btn', className: 'prev-next-btn', textContent: '❮' });
         const nextBtn = el('button', { id: 'quiz-next-btn', className: 'prev-next-btn', textContent: '❯' });
         const reshuffleBtn = el('button', { id: 'quiz-reshuffle-btn', className: 'reshuffle-btn', textContent: '↩ Reshuffle' });
-        const closeBtn = el('div', { id: 'quiz-close-btn', className: 'close-btn', title: 'close flashcards', textContent: 'X' });
+        const closeBtn = el('button', { id: 'quiz-close-btn', className: 'close-btn', title: 'close flashcards', 'aria-label': 'Close flashcards', textContent: '✕' });
 
         const progress = el('div', null,
             el('div', { textContent: `${currentListIndex + 1} / ${workingData.length}` })
@@ -184,9 +184,11 @@ function runExtension() {
 
         const help = el('div');
         help.append(
-            el('b', { textContent: 'Navigate:' }), ' use buttons or right/left arrow keys', el('br'),
-            el('b', { textContent: 'Reveal Name:' }), ' press space or hover over the blurred name', el('br'),
-            el('i', { textContent: `Note: there are ${allHouseholdCount - workingData.length} households without photos.` }), el('br'),
+            el('b', { textContent: 'Navigate:' }), ' use buttons or ',
+            el('kbd', { textContent: '←' }), ' ', el('kbd', { textContent: '→' }), ' arrow keys', el('br'),
+            el('b', { textContent: 'Reveal Name:' }), ' press ',
+            el('kbd', { textContent: 'space' }), ' or hover over the blurred name', el('br'),
+            el('div', { className: 'help-note', textContent: `Note: there are ${allHouseholdCount - workingData.length} households without photos.` }),
             reshuffleBtn
         );
 
