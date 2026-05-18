@@ -15,26 +15,37 @@
 // on everthing below being redeclared
 function runExtension() {
 
+    const containerId = 'quiz-container'
+    const flashcardNameDisplayId = 'flashcard-display-name'
+
+    // Prevent stacking duplicate overlays / listeners on repeat clicks
+    if (document.getElementById(containerId)) return;
+
     let fullData = [];
     let workingData = [];
     let currentListIndex = -1;
     let allHouseholdCount = 0;
-    const containerId = 'quiz-container'
-    const flashcardNameDisplayId = 'flashcard-display-name'
 
-    // Wait for full list of households to load
-    const interval = setInterval(() => {
-        // this is the path to the anchor containing the household name and unique id
-        // luckily no part of the list is shown until the entire list has loaded
-        const selector = getQuerySelector()
+    // Wait for the household list to render. The list is loaded by an SPA,
+    // so we observe DOM mutations rather than polling.
+    const READY_TIMEOUT_MS = 30000;
+    const tryStart = () => {
+        const selector = getQuerySelector();
         if (selector.length) {
-            clearInterval(interval)
-            initialize()
+            observer.disconnect();
+            clearTimeout(readyTimeout);
+            processSelectorAndStart(selector);
+            return true;
         }
-    }, 500)
-
-    function initialize() {
-        processSelectorAndStart(getQuerySelector())
+        return false;
+    };
+    const observer = new MutationObserver(tryStart);
+    const readyTimeout = setTimeout(() => {
+        observer.disconnect();
+        console.warn('LDS Directory Flashcards: household list did not load within %dms', READY_TIMEOUT_MS);
+    }, READY_TIMEOUT_MS);
+    if (!tryStart()) {
+        observer.observe(document.body, { childList: true, subtree: true });
     }
 
     function getQuerySelector() {
@@ -48,33 +59,21 @@ function runExtension() {
 
         function checkIfImageExists(url, callback) {
             const img = new Image();
+            img.onload = () => callback(true);
+            img.onerror = () => callback(false);
             img.src = url;
-            if (img.complete) {
-                loadingImgCount = loadingImgCount + 1;
-                callback(true);
-            } else {
-                img.onload = () => {
-                    callback(true);
-                    loadingImgCount = loadingImgCount + 1;
-                };
-            
-                img.onerror = () => {
-                    callback(false);
-                    loadingImgCount = loadingImgCount + 1;
-                };
-            }
         }
 
         const container = document.getElementById(containerId)
-        const allHouseholdCountDisplay = allHouseholdCount - 1 // zero indexed
 
         fullData.forEach(familyData => {
             checkIfImageExists(familyData.householdImgUrl, function(didLoad) {
                 familyData.hasImage = didLoad
-                container.innerText = `Loading ${loadingImgCount}/${allHouseholdCountDisplay} flashcards...`
-                
+                loadingImgCount = loadingImgCount + 1;
+                container.innerText = `Loading ${loadingImgCount}/${allHouseholdCount} flashcards...`
+
                 // display once all images have been checked
-                if (loadingImgCount === allHouseholdCountDisplay) {
+                if (loadingImgCount === allHouseholdCount) {
                     resetList()
                 }
             })
@@ -92,7 +91,7 @@ function runExtension() {
     // create a new full randomized family list
     function resetList() {
         currentListIndex = -1;
-        workingData = fullData.filter(f => f.hasImage).slice(0)
+        workingData = fullData.filter(f => f.hasImage)
         shuffleArray(workingData)
         nextFamily()
     }
@@ -112,11 +111,11 @@ function runExtension() {
     }
 
     function showDisplayName() {
-        document.getElementById(flashcardNameDisplayId).style.filter = ''
+        document.getElementById(flashcardNameDisplayId).classList.add('revealed')
     }
 
     function hideDisplayName() {
-        document.getElementById(flashcardNameDisplayId).style.filter = 'blur(10px)'
+        document.getElementById(flashcardNameDisplayId).classList.remove('revealed')
     }
 
 
@@ -141,47 +140,68 @@ function runExtension() {
         // cleanup
         document.body.removeEventListener('keyup', keyupListener)
         document.body.removeEventListener('keydown', keydownListener)
-        document.body.removeEventListener('click', closeQuiz)
         document.getElementById(containerId).remove()
     }
 
+    function el(tag, props, ...children) {
+        const node = document.createElement(tag);
+        if (props) {
+            for (const [k, v] of Object.entries(props)) {
+                if (k === 'className') node.className = v;
+                else if (k === 'textContent') node.textContent = v;
+                else node.setAttribute(k, v);
+            }
+        }
+        for (const child of children) {
+            if (child == null) continue;
+            node.append(child);
+        }
+        return node;
+    }
+
     function loadFamily(familyData) {
-        let container = document.getElementById(containerId)
-        container.setHTMLUnsafe(`
-            <div class="image-container">
-                <div>
-                    <img src="${familyData.householdImgUrl}">
-                </div>
-            </div>
-            <div class="controls-container">
-                <div id="${flashcardNameDisplayId}" class="display-name" style="filter: blur(10px)">${familyData.householdName}</div>
-                <button id="quiz-prev-btn" class="prev-next-btn">❮</button>
-                <button id="quiz-next-btn" class="prev-next-btn">❯</button>
-                
-                <div>
-                    <div>${currentListIndex + 1} / ${workingData.length}</div>
-                </div>
-                <br>
-                <div>
-                    <b>Navigate:</b> use buttons or right/left arrow keys<br/>
-                    <b>Reveal Name:</b> press space or hover over the blurred name<br/>
-                    <i>Note: there are ${allHouseholdCount - workingData.length} households without photos.</i><br/>
-                    <button id="quiz-reshuffle-btn" style="cursor: pointer;">↩ Reshuffle</button>
-                </div>
+        const container = document.getElementById(containerId);
+        container.replaceChildren();
 
-                <div id="quiz-close-btn" class="close-btn" title="close flashcards">
-                    X
-                </div>
-            </div>
-        `)
+        const img = el('img');
+        img.src = familyData.householdImgUrl;
 
-        document.getElementById(flashcardNameDisplayId).addEventListener('mouseover', showDisplayName);
-        document.getElementById(flashcardNameDisplayId).addEventListener('mouseout', hideDisplayName);
-        document.getElementById('quiz-prev-btn').addEventListener('click', previousFamily);
-        document.getElementById('quiz-next-btn').addEventListener('click', nextFamily);
-        document.getElementById('quiz-reshuffle-btn').addEventListener('click', resetList);
-        document.getElementById('quiz-close-btn').addEventListener('click', closeQuiz);
-        
+        const imageContainer = el('div', { className: 'image-container' },
+            el('div', null, img)
+        );
+
+        const nameDisplay = el('div', { id: flashcardNameDisplayId, className: 'display-name' });
+        nameDisplay.textContent = familyData.householdName;
+
+        const prevBtn = el('button', { id: 'quiz-prev-btn', className: 'prev-next-btn', textContent: '❮' });
+        const nextBtn = el('button', { id: 'quiz-next-btn', className: 'prev-next-btn', textContent: '❯' });
+        const reshuffleBtn = el('button', { id: 'quiz-reshuffle-btn', className: 'reshuffle-btn', textContent: '↩ Reshuffle' });
+        const closeBtn = el('div', { id: 'quiz-close-btn', className: 'close-btn', title: 'close flashcards', textContent: 'X' });
+
+        const progress = el('div', null,
+            el('div', { textContent: `${currentListIndex + 1} / ${workingData.length}` })
+        );
+
+        const help = el('div');
+        help.append(
+            el('b', { textContent: 'Navigate:' }), ' use buttons or right/left arrow keys', el('br'),
+            el('b', { textContent: 'Reveal Name:' }), ' press space or hover over the blurred name', el('br'),
+            el('i', { textContent: `Note: there are ${allHouseholdCount - workingData.length} households without photos.` }), el('br'),
+            reshuffleBtn
+        );
+
+        const controls = el('div', { className: 'controls-container' },
+            nameDisplay, prevBtn, nextBtn, progress, el('br'), help, closeBtn
+        );
+
+        container.append(imageContainer, controls);
+
+        nameDisplay.addEventListener('mouseover', showDisplayName);
+        nameDisplay.addEventListener('mouseout', hideDisplayName);
+        prevBtn.addEventListener('click', previousFamily);
+        nextBtn.addEventListener('click', nextFamily);
+        reshuffleBtn.addEventListener('click', resetList);
+        closeBtn.addEventListener('click', closeQuiz);
     }
 
 
